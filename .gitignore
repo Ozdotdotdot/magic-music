@@ -1,0 +1,6 @@
+# third-party driver clone (built/installed separately — see README)
+aur-hid-magicmouse-dkms/
+
+# python
+__pycache__/
+*.pyc
