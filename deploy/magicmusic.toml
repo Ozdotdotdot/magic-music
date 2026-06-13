@@ -1,0 +1,29 @@
+# Magic Music configuration — installed to /etc/magicmusic.toml
+#
+# Every key is optional; anything you omit uses the built-in default shown here.
+# Edit and then `sudo systemctl restart magicmusic` to apply.
+
+# --- play/pause (1-finger force-click) ---
+force_click = 180          # pressure to trigger play/pause (0-253); higher = press harder
+pressure_rearm = 120       # pressure must drop below this before it can fire again
+
+# --- volume (3-finger vertical slide) ---
+step_distance = 90         # trackpad units between volume notches; higher = slower/coarser
+vol_delta_pct = 2          # volume percent changed per notch
+volume_deadzone = 200      # travel ignored before a slide acts (also the axis-lock gate)
+
+# --- track skip (3-finger horizontal slide) ---
+skips_across_pad = 3       # full-width swipe = this many skips; lower = longer swipe per skip
+
+# --- timing ---
+ready_debounce = 0.04      # seconds 3 fingers must persist before the "ready" buzz
+                           # (filters the 3-finger transient of a 4-finger workspace swipe)
+
+# --- audio sink targeted by wpctl ---
+sink = "@DEFAULT_AUDIO_SINK@"
+
+# --- haptic strengths (0x00-0x7f), byte 3 of the actuator report ---
+ready_buzz = 0x2a          # 3 fingers landed -> gesture mode ready
+tick_buzz  = 0x12          # light per-volume-step tick
+skip_buzz  = 0x35          # firmer buzz per track skip
+tap_buzz   = 0x3f          # strong play/pause confirm

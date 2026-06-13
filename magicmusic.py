@@ -24,29 +24,49 @@ import os
 import select
 import subprocess
 import time
+import tomllib
 import evdev
 from evdev import ecodes
 
-# --- tunables -------------------------------------------------------------
-FORCE_CLICK = 180          # 1-finger pressure to fire play/pause (0-253)
-PRESSURE_REARM = 120       # pressure must fall below this to re-arm play/pause
-STEP_DISTANCE = 90         # *** the knob you asked for *** trackpad units of finger
-                           # travel between each volume notch (one haptic buzz + one
-                           # VOL_DELTA_PCT change). Higher = actuations farther apart /
-                           # volume changes more slowly. Pad Y span ~5000u (printed at start).
-VOL_DELTA_PCT = 2          # volume change per notch (percent). Pair with STEP_DISTANCE:
-                           # raise both together to keep sensitivity but space out buzzes.
-SKIPS_ACROSS_PAD = 3       # horizontal: a full-width 3-finger swipe = this many track skips
-                           # (higher = need a shorter swipe per skip; lower = longer swipe)
-VOLUME_DEADZONE = 200      # units of slide to ignore after 3 fingers land (axis-lock gate)
-READY_DEBOUNCE = 0.04      # seconds 3 fingers must persist before the ready buzz
-                           # (filters the 3-finger transient of a 4-finger swipe)
-SINK = "@DEFAULT_AUDIO_SINK@"
+
+def _load_config():
+    """Optional overrides from $MM_CONFIG (default /etc/magicmusic.toml). All keys
+    optional; anything absent falls back to the defaults below."""
+    path = os.environ.get("MM_CONFIG", "/etc/magicmusic.toml")
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+    except (PermissionError, tomllib.TOMLDecodeError) as e:
+        print(f"warning: ignoring config at {path}: {e}")
+        return {}
+
+
+_cfg = _load_config()
+def _c(key, default):
+    return _cfg.get(key, default)
+
+# --- tunables (override in /etc/magicmusic.toml; see magicmusic.toml.example) --
+FORCE_CLICK      = _c("force_click", 180)       # 1-finger pressure for play/pause (0-253)
+PRESSURE_REARM   = _c("pressure_rearm", 120)    # pressure must drop below this to re-arm
+STEP_DISTANCE    = _c("step_distance", 90)      # trackpad units between volume notches
+VOL_DELTA_PCT    = _c("vol_delta_pct", 2)       # volume % per notch
+SKIPS_ACROSS_PAD = _c("skips_across_pad", 3)    # full-width swipe = this many track skips
+VOLUME_DEADZONE  = _c("volume_deadzone", 200)   # axis-lock gate: travel before a slide acts
+READY_DEBOUNCE   = _c("ready_debounce", 0.04)   # seconds 3 fingers must persist before buzz
+SINK             = _c("sink", "@DEFAULT_AUDIO_SINK@")
+# haptic strengths (byte 3 of the actuator report, 0x00-0x7f)
+READY_BUZZ       = _c("ready_buzz", 0x2a)       # 3 fingers landed -> gesture mode ready
+TICK_BUZZ        = _c("tick_buzz", 0x12)        # light per-volume-step tick
+SKIP_BUZZ        = _c("skip_buzz", 0x35)        # firmer buzz per track skip
+TAP_BUZZ         = _c("tap_buzz", 0x3f)         # strong play/pause confirm
 
 # the daemon runs as root (for raw hidraw/evdev), but wpctl needs to reach the
-# invoking user's PipeWire session — so drop to that uid for the volume call
-USER_UID = int(os.environ.get("SUDO_UID", 1000))
-USER_GID = int(os.environ.get("SUDO_GID", USER_UID))
+# user's PipeWire session — so drop to that uid for the volume call. Under systemd
+# the service sets MM_UID/MM_GID; when run by hand under sudo, SUDO_UID is used.
+USER_UID = int(os.environ.get("MM_UID") or os.environ.get("SUDO_UID") or 1000)
+USER_GID = int(os.environ.get("MM_GID") or os.environ.get("SUDO_GID") or USER_UID)
 USER_ENV = {"XDG_RUNTIME_DIR": f"/run/user/{USER_UID}", "PATH": "/usr/bin:/bin"}
 
 
@@ -80,10 +100,6 @@ def set_volume_abs(level):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ))
 
-READY_BUZZ = 0x2a          # 3 fingers landed -> gesture mode ready
-TICK_BUZZ = 0x12           # light per-volume-step tick
-SKIP_BUZZ = 0x35           # firmer buzz per track skip
-TAP_BUZZ = 0x3f            # strong play/pause confirm
 # -------------------------------------------------------------------------
 
 
@@ -93,7 +109,7 @@ def find_trackpad_event():
         abs_codes = {c for c, _ in dev.capabilities().get(ecodes.EV_ABS, [])}
         if "Magic Trackpad" in dev.name and ecodes.ABS_MT_PRESSURE in abs_codes:
             return dev
-    raise SystemExit("Magic Trackpad event node not found (is the driver loaded?)")
+    return None
 
 
 def find_hidraw():
@@ -104,7 +120,21 @@ def find_hidraw():
                     return "/dev/" + sysdir.rsplit("/", 1)[1]
         except OSError:
             continue
-    raise SystemExit("Trackpad hidraw node not found")
+    return None
+
+
+def wait_for_trackpad():
+    """Block until the trackpad's evdev + hidraw nodes exist (it may connect after
+    boot). Lets the systemd service start cleanly before the Bluetooth link is up."""
+    announced = False
+    while True:
+        dev, hidpath = find_trackpad_event(), find_hidraw()
+        if dev and hidpath:
+            return dev, hidpath
+        if not announced:
+            print("waiting for Magic Trackpad (driver loaded? device connected?)...")
+            announced = True
+        time.sleep(2)
 
 
 def haptic_report(b3, b6=0x06, b11=0x06):
@@ -116,8 +146,8 @@ def run(*cmd):
 
 
 def main():
-    dev = find_trackpad_event()
-    hid = open(find_hidraw(), "wb", buffering=0)
+    dev, hidpath = wait_for_trackpad()
+    hid = open(hidpath, "wb", buffering=0)
     yinfo = dev.absinfo(ecodes.ABS_Y)
     xinfo = dev.absinfo(ecodes.ABS_X)
     step_units = max(1, STEP_DISTANCE)

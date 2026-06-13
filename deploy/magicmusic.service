@@ -1,0 +1,17 @@
+[Unit]
+Description=Magic Music — Magic Trackpad 2 music controls
+After=bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+# __UID__/__GID__ are substituted by install.sh with the target user's ids, so the
+# wpctl volume calls reach that user's PipeWire session.
+Environment=MM_UID=__UID__ MM_GID=__GID__ MM_CONFIG=/etc/magicmusic.toml
+ExecStart=/usr/bin/python3 /usr/local/lib/magic-music/magicmusic.py
+# the daemon waits for the trackpad on startup; restart covers BT disconnects
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
