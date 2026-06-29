@@ -20,6 +20,11 @@ skips_across_pad = 3       # full-width swipe = this many skips; lower = longer 
 ready_debounce = 0.04      # seconds 3 fingers must persist before the "ready" buzz
                            # (filters the 3-finger transient of a 4-finger workspace swipe)
 
+# --- lights (5-finger double-tap toggles a Home Assistant webhook) ---
+lights_url = "http://100.122.255.109:8123/api/webhook/togglelights"
+tap_max_duration = 0.3     # a 5-finger touch shorter than this counts as a tap
+double_tap_gap = 0.5       # max seconds between the two taps
+
 # --- audio sink targeted by wpctl ---
 sink = "@DEFAULT_AUDIO_SINK@"
 
@@ -28,6 +33,7 @@ ready_buzz = 0x2a          # 3 fingers landed -> gesture mode ready
 tick_buzz  = 0x12          # light per-volume-step tick
 skip_buzz  = 0x35          # firmer buzz per track skip
 tap_buzz   = 0x3f          # force-click down-click (firm play/pause confirm)
+lights_buzz = 0x35         # confirm buzz when the 5-finger double-tap toggles lights
 
 # up-click fired as a force-press lifts, for a real two-actuation click feel.
 # Mirrors the firmware's button_up waveform; differs from the down-click in

@@ -14,6 +14,7 @@ controlled with `mpc`. System volume is **PipeWire**, controlled with `wpctl`.
 3-finger slide LEFT/RIGHT    ->  previous / next track (one skip per swipe)
 1-finger hard press (force)  ->  play / pause (MPD, via mpc)
 3-finger hard press (force)  ->  play / pause (any MPRIS player, via playerctl)
+5-finger double-tap          ->  toggle smart lights (Home Assistant webhook)
 ```
 
 The first move past a small dead zone **locks the gesture to one axis** (vertical

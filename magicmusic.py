@@ -14,6 +14,7 @@ Controls:
                                  so a hard press never needs to hold still.
   - 3-finger force-click >180 -> play/pause (`playerctl play-pause`), for any
                                  MPRIS player (Spotify, browsers, etc.).
+  - 5-finger double-tap       -> toggle smart lights (Home Assistant webhook).
 
 The first move past the dead zone LOCKS the gesture to one axis (whichever
 dominates), so volume and track-skip never trigger each other.
@@ -58,6 +59,10 @@ SKIPS_ACROSS_PAD = _c("skips_across_pad", 3)    # full-width swipe = this many t
 VOLUME_DEADZONE  = _c("volume_deadzone", 200)   # axis-lock gate: travel before a slide acts
 READY_DEBOUNCE   = _c("ready_debounce", 0.04)   # seconds 3 fingers must persist before buzz
 SINK             = _c("sink", "@DEFAULT_AUDIO_SINK@")
+# 5-finger double-tap -> toggle smart lights (Home Assistant webhook)
+LIGHTS_URL       = _c("lights_url", "http://100.122.255.109:8123/api/webhook/togglelights")
+TAP_MAX_DURATION = _c("tap_max_duration", 0.3)  # a "tap" is a 5-finger touch shorter than this
+DOUBLE_TAP_GAP   = _c("double_tap_gap", 0.5)    # max seconds between the two taps
 # haptic strengths (byte 3 of the actuator report, 0x00-0x7f)
 READY_BUZZ       = _c("ready_buzz", 0x2a)       # 3 fingers landed -> gesture mode ready
 TICK_BUZZ        = _c("tick_buzz", 0x12)        # light per-volume-step tick
@@ -69,6 +74,7 @@ TAP_BUZZ         = _c("tap_buzz", 0x3f)         # firm play/pause confirm (down-
 RELEASE_BUZZ     = _c("release_buzz", 0x11)     # up-click strength (b3)
 RELEASE_B6       = _c("release_b6", 0x04)       # up-click texture (b6)
 RELEASE_B11      = _c("release_b11", 0x04)      # up-click texture (b11)
+LIGHTS_BUZZ      = _c("lights_buzz", 0x35)      # confirm buzz for the lights toggle
 
 # the daemon runs as root (for raw hidraw/evdev), but wpctl needs to reach the
 # user's PipeWire session, so drop to that uid for the volume call. Under systemd
@@ -168,6 +174,12 @@ def run(*cmd):
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def run_bg(*cmd):
+    """Fire-and-forget, for calls that may be slow (e.g. a network curl) and must
+    never stall the event loop."""
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def main():
     dev, hidpath = wait_for_trackpad()
     hid = open(hidpath, "wb", buffering=0)
@@ -181,7 +193,8 @@ def main():
           f"~{notches * VOL_DELTA_PCT}% volume across the full pad")
     print(f"horizontal: {skip_units}u/skip -> {SKIPS_ACROSS_PAD} skips across the full pad")
     print(f"3-finger = volume/skip, force-click ({FORCE_CLICK}) = play/pause "
-          f"(1-finger -> mpc, 3-finger -> playerctl). Ctrl-C to quit.\n")
+          f"(1-finger -> mpc, 3-finger -> playerctl).")
+    print("5-finger double-tap = toggle lights. Ctrl-C to quit.\n")
 
     def buzz(strength, b6=0x06, b11=0x06):
         hid.write(haptic_report(strength, b6, b11))
@@ -204,6 +217,10 @@ def main():
     last_step = 0
     skip_fired = False       # track-skip is one-shot per swipe
     pp_armed = True
+    # five-finger double-tap -> lights
+    tap_peak = 0             # most fingers seen during the current contact
+    touch_start = 0.0        # when the current contact began (to time the tap)
+    last_tap = 0.0           # when the last completed 5-finger tap ended
 
     def engage_gesture():
         nonlocal gesture_latched, axis, anchor_x, anchor_y, last_step, skip_fired
@@ -248,20 +265,39 @@ def main():
                 continue
 
             # --- one decision per frame ---
+            now = time.monotonic()
             fingers = len(active)
             pressure = max(slot_pressure.values(), default=0)   # whole-pad click force
 
+            # track the current contact so we can recognise a five-finger tap
+            if fingers > 0 and tap_peak == 0:
+                touch_start = now           # first finger of a fresh contact
+            tap_peak = max(tap_peak, fingers)
+
             # full lift resets the latch (so the ready buzz fires once per touch,
             # immune to 3->2->3 finger-count flicker while fingers settle)
-            if fingers == 0 and gesture_latched:
-                print(f"  done ({axis or 'idle'} {last_step:+d})")
-                gesture_latched = False
+            if fingers == 0:
+                if gesture_latched:
+                    print(f"  done ({axis or 'idle'} {last_step:+d})")
+                    gesture_latched = False
+                # a brief 5-finger touch is a tap; two within DOUBLE_TAP_GAP -> lights
+                if tap_peak == 5 and now - touch_start <= TAP_MAX_DURATION:
+                    if last_tap and now - last_tap <= DOUBLE_TAP_GAP:
+                        run_bg("curl", "-s", "-m", "5", LIGHTS_URL)
+                        buzz(LIGHTS_BUZZ)
+                        print("5-finger double-tap -> lights")
+                        last_tap = 0.0      # consume, so a 3rd tap doesn't re-toggle
+                    else:
+                        last_tap = now
+                tap_peak = 0
 
             # tentatively start the debounce on 3 fingers; cancel it the instant
-            # the count isn't 3 (e.g. a 4th finger lands -> workspace swipe)
-            if fingers == 3 and not gesture_latched:
+            # the count isn't 3 (e.g. a 4th finger lands -> workspace swipe). tap_peak
+            # < 4 keeps a 5-finger tap (which passes through 3 on the way up and down)
+            # from arming gesture mode mid-tap.
+            if fingers == 3 and not gesture_latched and tap_peak < 4:
                 if pending_deadline is None:
-                    pending_deadline = time.monotonic() + READY_DEBOUNCE
+                    pending_deadline = now + READY_DEBOUNCE
             else:
                 pending_deadline = None
 
