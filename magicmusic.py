@@ -188,8 +188,10 @@ def main():
 
     # raw state, updated per event
     cur_slot = 0
-    active = set()      # MT slots currently holding a finger
-    pressure = 0
+    active = set()       # MT slots currently holding a finger
+    slot_pressure = {}   # per-slot pressure; the force-click reads the MAX across
+                         # fingers, so a whole-pad press registers once instead of
+                         # flickering between each finger's individual pressure
     x = 0
     y = 0
     # decision state, evaluated per SYN frame
@@ -229,9 +231,13 @@ def main():
                 if e.code == ecodes.ABS_MT_SLOT:
                     cur_slot = e.value
                 elif e.code == ecodes.ABS_MT_TRACKING_ID:
-                    active.discard(cur_slot) if e.value == -1 else active.add(cur_slot)
-                elif e.code in (ecodes.ABS_PRESSURE, ecodes.ABS_MT_PRESSURE):
-                    pressure = e.value
+                    if e.value == -1:
+                        active.discard(cur_slot)
+                        slot_pressure.pop(cur_slot, None)   # lifted finger stops counting
+                    else:
+                        active.add(cur_slot)
+                elif e.code == ecodes.ABS_MT_PRESSURE:
+                    slot_pressure[cur_slot] = e.value
                 elif e.code == ecodes.ABS_X:
                     x = e.value
                 elif e.code == ecodes.ABS_Y:
@@ -243,6 +249,7 @@ def main():
 
             # --- one decision per frame ---
             fingers = len(active)
+            pressure = max(slot_pressure.values(), default=0)   # whole-pad click force
 
             # full lift resets the latch (so the ready buzz fires once per touch,
             # immune to 3->2->3 finger-count flicker while fingers settle)
