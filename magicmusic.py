@@ -62,7 +62,13 @@ SINK             = _c("sink", "@DEFAULT_AUDIO_SINK@")
 READY_BUZZ       = _c("ready_buzz", 0x2a)       # 3 fingers landed -> gesture mode ready
 TICK_BUZZ        = _c("tick_buzz", 0x12)        # light per-volume-step tick
 SKIP_BUZZ        = _c("skip_buzz", 0x35)        # firmer buzz per track skip
-TAP_BUZZ         = _c("tap_buzz", 0x3f)         # strong play/pause confirm
+TAP_BUZZ         = _c("tap_buzz", 0x3f)         # firm play/pause confirm (down-click)
+# up-click when a force-press lifts. Matches the firmware's button_up waveform
+# (0x11/0x04/0x04): it differs from the down-click in b6/b11, not just strength,
+# which is what makes the pair feel like one real click. Tune with haptic_tune.py.
+RELEASE_BUZZ     = _c("release_buzz", 0x11)     # up-click strength (b3)
+RELEASE_B6       = _c("release_b6", 0x04)       # up-click texture (b6)
+RELEASE_B11      = _c("release_b11", 0x04)      # up-click texture (b11)
 
 # the daemon runs as root (for raw hidraw/evdev), but wpctl needs to reach the
 # user's PipeWire session, so drop to that uid for the volume call. Under systemd
@@ -177,8 +183,8 @@ def main():
     print(f"3-finger = volume/skip, force-click ({FORCE_CLICK}) = play/pause "
           f"(1-finger -> mpc, 3-finger -> playerctl). Ctrl-C to quit.\n")
 
-    def buzz(strength):
-        hid.write(haptic_report(strength))
+    def buzz(strength, b6=0x06, b11=0x06):
+        hid.write(haptic_report(strength, b6, b11))
 
     # raw state, updated per event
     cur_slot = 0
@@ -289,7 +295,16 @@ def main():
             # play/pause: force-click, no movement check. 1 finger -> mpc toggle
             # (MPD); 3 fingers -> playerctl play-pause (whatever MPRIS player is
             # active). One re-arm flag, so a single click fires exactly one action.
+            #
+            # Like a real trackpad click, a force-click buzzes TWICE: a firm DOWN
+            # actuation when the press crosses FORCE_CLICK, then a lighter UP
+            # actuation when the finger lifts back below PRESSURE_REARM. The
+            # pp_armed False->True edge is the release, so the up-click is tied to
+            # your finger lifting (not a fixed delay), which is what makes it feel
+            # like one click instead of two buzzes.
             if pressure <= PRESSURE_REARM:
+                if not pp_armed:
+                    buzz(RELEASE_BUZZ, RELEASE_B6, RELEASE_B11)  # up-click: "letting go" half
                 pp_armed = True
             elif pp_armed and pressure >= FORCE_CLICK:
                 if fingers == 1 and not gesture_latched:

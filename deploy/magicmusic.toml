@@ -3,9 +3,10 @@
 # Every key is optional; anything you omit uses the built-in default shown here.
 # Edit and then `sudo systemctl restart magicmusic` to apply.
 
-# --- play/pause (1-finger force-click) ---
+# --- play/pause (force-click: 1-finger = mpc, 3-finger = playerctl) ---
 force_click = 180          # pressure to trigger play/pause (0-253); higher = press harder
-pressure_rearm = 120       # pressure must drop below this before it can fire again
+pressure_rearm = 120       # pressure must drop below this before it can fire again; also
+                           # where the up-click fires as your finger lifts
 
 # --- volume (3-finger vertical slide) ---
 step_distance = 90         # trackpad units between volume notches; higher = slower/coarser
@@ -26,4 +27,11 @@ sink = "@DEFAULT_AUDIO_SINK@"
 ready_buzz = 0x2a          # 3 fingers landed -> gesture mode ready
 tick_buzz  = 0x12          # light per-volume-step tick
 skip_buzz  = 0x35          # firmer buzz per track skip
-tap_buzz   = 0x3f          # strong play/pause confirm
+tap_buzz   = 0x3f          # force-click down-click (firm play/pause confirm)
+
+# up-click fired as a force-press lifts, for a real two-actuation click feel.
+# Mirrors the firmware's button_up waveform; differs from the down-click in
+# texture (b6/b11), not just strength. Tune all three with haptic_tune.py.
+release_buzz = 0x11        # up-click strength (b3)
+release_b6   = 0x04        # up-click texture (b6)
+release_b11  = 0x04        # up-click texture (b11)
